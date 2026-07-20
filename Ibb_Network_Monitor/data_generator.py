@@ -1,95 +1,118 @@
 # -*- coding: utf-8 -*-
 """
-Updated Data Generator for Ibb MPLS Network Monitor
-Description: Real-world simulation based on Ibb terrain, aerial cables, wireless towers, and actual peak hours.
+Database Data Generator Module with Hidden Credentials
+Description: Generates and populates initial telecom data into PostgreSQL securely.
 Author: AI Solutions Architect
 Date: 2026
 """
 
-import pandas as pd
-import numpy as np
 import os
+import psycopg2
+import random
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
-def generate_ibb_real_network_data(num_records=600, output_filename="assets/network_data.csv"):
-    np.random.seed(42)
-    
-    # 1. قائمة بجميع مديريات محافظة إب الـ 18 (لإظهار الشمولية الكاملة)
+# تحميل متغيرات البيئة من ملف .env
+load_dotenv()
+
+# إعدادات الاتصال الآمنة والمستدامة من ملف البيئة
+DB_PARAMS = {
+    "host": os.getenv("DB_HOST", "localhost"),
+    "database": os.getenv("DB_NAME", "ibb_telecom_db"),
+    "user": os.getenv("DB_USER", "postgres"),
+    "password": os.getenv("DB_PASSWORD", "root")  # "root" هي القيمة الافتراضية لحماية الكود من الانهيار
+}
+
+def generate_ibb_real_network_data():
+    """توليد قراءات شبكة افتراضية لمديريات إب وحفظها في قاعدة البيانات إذا كانت فارغة"""
     districts = [
-        'المركز (المشنة والظهار)', 'جبلة', 'السدة', 'النادرة', 'العدين', 'حبيش', 'بعدان',
-        'السياني', 'ذي السفال', 'يريم', 'الرضمة', 'القفر', 'المخادر', 'حزم العدين', 
-        'فرع العدين', 'الشعر', 'السبرة', 'المخادر'
+        'المركز (المشنة والظهار)', 'جبلة', 'السدة', 'النادرة',
+        'العدين', 'حبيش', 'بعدان', 'السياني', 'ذي السفال', 'يريم',
+        'الرضمة', 'القفر', 'المخادر', 'حزم العدين', 'فرع العدين',
+        'الشعر', 'السبرة'
     ]
     
-    # 2. توليد التواريخ لآخر 7 أيام مع التركيز على فترة قريبة وفترات أعياد افتراضية
-    end_time = datetime.now()
-    start_time = end_time - timedelta(days=7)
-    
-    timestamps = [start_time + timedelta(seconds=int(np.random.randint(0, int((end_time - start_time).total_seconds())))) 
-                  for _ in range(num_records)]
-    timestamps.sort()
-    
-    data = []
-    
-    for dt in timestamps:
-        district = np.random.choice(districts)
-        hour = dt.hour
-        day_of_week = dt.weekday()
+    try:
+        conn = psycopg2.connect(**DB_PARAMS)
+        cur = conn.cursor()
         
-        # ضبط ساعات الذروة الحقيقية التي ذكرتها (من 6 مساءً إلى 1 صباحاً)
-        # 6 PM (18) to 1 AM (1)
-        is_real_peak = (hour >= 18) or (hour <= 1)
+        # 1. إنشاء الجدول الخاص بفرع إب إذا لم يكن موجوداً من قبل
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS network_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP NOT NULL,
+                district VARCHAR(100) NOT NULL,
+                hour INT NOT NULL,
+                day_of_week INT NOT NULL,
+                latency_ms FLOAT NOT NULL,
+                packet_loss_percent FLOAT NOT NULL,
+                mpls_bandwidth_usage_percent FLOAT NOT NULL,
+                temperature_c FLOAT NOT NULL,
+                status VARCHAR(50) NOT NULL
+            );
+        """)
+        conn.commit()
         
-        # محاكاة الطقس الحقيقي في إب (أعلى درجة 32 وأقلها 15)
-        if hour in [12, 13, 14, 15]: # فترة الظهيرة
-            temperature = np.random.uniform(26, 32)
-        else:
-            temperature = np.random.uniform(15, 25)
-            
-        # بناء المؤشرات بناءً على طبيعة الشبكة (MPLS وكابلات هوائية وأبراج لاسلكية)
-        if is_real_peak:
-            # ضغط هائل على الأبراج ولواقط هواوي للمشتركين
-            mpls_bandwidth_usage_percent = np.random.uniform(85, 99) # استهلاك قريب من الامتلاء
-            latency = np.random.uniform(90, 190)                     # زمن استجابة مرتفع (بطء الشبكة)
-            packet_loss = np.random.uniform(1.0, 4.5)                # فقدان حزم بسبب الازدحام اللاسلكي
-        else:
-            # أوقات خارج الذروة (الفجر والظهر)
-            mpls_bandwidth_usage_percent = np.random.uniform(20, 60)
-            latency = np.random.uniform(15, 50)
-            packet_loss = np.random.uniform(0.0, 1.2)
-            
-        # محاكاة مشكلة الكابلات الممتدة على الأعمدة (تأثر بالرياح أو التضاريس الجبلية)
-        # سنضع احتمال عشوائي 2% لحدوث قطع مادي مفاجئ في كابل يربط مديرية بعيدة
-        physical_cut = np.random.choice([False, True], p=[0.98, 0.02])
-        if physical_cut:
-            latency = np.random.uniform(250, 400)
-            packet_loss = np.random.uniform(8.0, 25.0) # فقدان حزم كارثي بسبب قطع الكابل
-            
-        # تطبيق الشروط الذكية لتحديد حالة الشبكة بناءً على المعطيات الجديدة
-        if packet_loss > 5.0 or physical_cut:
-            status = 'عطل (قطع كابل/برج منفصل)'
-        elif mpls_bandwidth_usage_percent > 85.0:
-            status = 'ازدحام (ذروة المساء)'
-        else:
-            status = 'طبيعي'
-            
-        data.append({
-            'Timestamp': dt.strftime('%Y-%m-%d %H:%M:%S'),
-            'District': district,
-            'Hour': hour,
-            'DayOfWeek': day_of_week,
-            'Latency_ms': round(latency, 2),
-            'PacketLoss_Percent': round(packet_loss, 2),
-            'MPLS_Bandwidth_Usage_Percent': round(mpls_bandwidth_usage_percent, 2),
-            'Temperature_C': round(temperature, 1),
-            'Status': status
-        })
+        # 2. التحقق مما إذا كانت قاعدة البيانات تحتوي على بيانات مسبقة أم لا
+        cur.execute("SELECT COUNT(*) FROM network_logs;")
+        count = cur.fetchone()[0]
         
-    df = pd.DataFrame(data)
-    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
-    df.to_csv(output_filename, index=False, encoding='utf-8-sig')
-    print(f"✅ تم تحديث المحاكي الذكي ليعكس واقع شبكة إب الـ 18 مديرية وبروتوكول MPLS!")
-    return df
+        if count > 0:
+            cur.close()
+            conn.close()
+            return  # قاعدة البيانات تحتوي على بيانات بالفعل، لا حاجة للتكرار
+            
+        # 3. توليد قراءات تاريخية مكثفة (أرشيف لـ 7 أيام مضت لتغذية الـ Machine Learning)
+        base_time = datetime.now() - timedelta(days=7)
+        logs_to_insert = []
+        
+        for day in range(7):
+            for hour in range(24):
+                current_time = base_time + timedelta(days=day, hours=hour)
+                weekday = current_time.weekday()
+                
+                for dist in districts:
+                    # محاكاة واقعية لوقت الذروة في اليمن (من 7 مساءً وحتى 11 مساءً)
+                    is_peak = 18 <= hour <= 23
+                    
+                    if is_peak:
+                        mpls_usage = round(random.uniform(75.0, 96.0), 2)
+                        latency = round(random.uniform(90.0, 180.0), 2)
+                        packet_loss = round(random.uniform(0.5, 4.5), 2)
+                    else:
+                        mpls_usage = round(random.uniform(30.0, 70.0), 2)
+                        latency = round(random.uniform(20.0, 60.0), 2)
+                        packet_loss = round(random.uniform(0.0, 0.9), 2)
+                    
+                    # محاكاة الأعطال المفاجئة (مثل انقطاع الألياف الضوئية الميدانية بنسبة 2%)
+                    if random.random() < 0.02:
+                        packet_loss = round(random.uniform(8.0, 25.0), 2)
+                        status = 'عطل (قطع كابل/برج منفصل)'
+                    elif mpls_usage > 85.0:
+                        status = 'ازدحام (ذروة المساء)'
+                    else:
+                        status = 'طبيعي'
+                        
+                    temp = round(random.uniform(16.0, 32.0), 1)
+                    
+                    logs_to_insert.append((
+                        current_time, dist, hour, weekday, latency, packet_loss, mpls_usage, temp, status
+                    ))
+        
+        # إدخال البيانات دفعة واحدة لضمان السرعة والكفاءة الأكاديمية
+        insert_query = """
+            INSERT INTO network_logs (timestamp, district, hour, day_of_week, latency_ms, packet_loss_percent, mpls_bandwidth_usage_percent, temperature_c, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+        """
+        cur.executemany(insert_query, logs_to_insert)
+        conn.commit()
+        
+        cur.close()
+        conn.close()
+        print("✅ Base network data has been successfully generated inside pgAdmin.")
+        
+    except Exception as e:
+        print(f"❌ Error during initial data deployment: {e}")
 
 if __name__ == "__main__":
     generate_ibb_real_network_data()
